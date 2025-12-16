@@ -29,11 +29,12 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      # 4️⃣ Build & Push Docker image (SHA-based tag)
+      # 4️⃣ Build & Push Docker image (Dockerfile is in app/)
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
         with:
-          context: .
+          context: ./app
+          file: ./app/Dockerfile
           push: true
           tags: |
             ghcr.io/berrouyne/kubernetes-cicd/hello:${{ github.sha }}
