@@ -1,35 +1,65 @@
-name: CI - Build and Push Docker Image
+name: CI Pipeline + GitOps Deploy
 
 on:
   push:
-    branches:
-      - main
-
-permissions:
-  contents: read
-  packages: write
+    branches: [ main ]
 
 jobs:
-  build:
+  build-and-deploy:
     runs-on: ubuntu-latest
 
+    permissions:
+      contents: write
+      packages: write
+
     steps:
-      - name: Checkout code
+      # 1️⃣ Checkout APP repository
+      - name: Checkout app repository
         uses: actions/checkout@v4
 
-      - name: Log in to GitHub Container Registry
+      # 2️⃣ Login to GitHub Container Registry
+      - name: Login to GHCR
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build Docker image
-        run: |
-          IMAGE=ghcr.io/${{ github.repository }}/hello:${{ github.sha }}
-          docker build -t $IMAGE app
+      # 3️⃣ Setup Docker Buildx
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
 
-      - name: Push Docker image
+      # 4️⃣ Build & Push Docker image (SHA-based tag)
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: |
+            ghcr.io/berrouyne/kubernetes-cicd/hello:${{ github.sha }}
+
+      # 5️⃣ Update GitOps (infra) repository
+      - name: Update Kubernetes deployment in GitOps repo
+        env:
+          GITOPS_PAT: ${{ secrets.GITOPS_PAT }}
         run: |
-          IMAGE=ghcr.io/${{ github.repository }}/hello:${{ github.sha }}
-          docker push $IMAGE
+          set -e
+
+          echo "Cloning GitOps repository..."
+          git clone https://x-access-token:${GITOPS_PAT}@github.com/berrouyne/kubernetes-cicd-infra.git
+          cd kubernetes-cicd-infra
+
+          echo "Updating image tag in deployment.yaml..."
+          sed -i "s|image: ghcr.io/berrouyne/kubernetes-cicd/hello:.*|image: ghcr.io/berrouyne/kubernetes-cicd/hello:${{ github.sha }}|g" deployment.yaml
+
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+
+          git add deployment.yaml
+
+          if git diff --cached --quiet; then
+            echo "No changes detected, skipping commit"
+          else
+            git commit -m "Deploy hello image ${{ github.sha }}"
+            git push origin main
+          fi
